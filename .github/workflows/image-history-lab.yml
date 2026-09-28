@@ -3,6 +3,12 @@ on:
   push:
     branches: [image-history-lab]
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Experiment source commit or branch
+        required: true
+        default: image-history-lab
+        type: string
 
 permissions:
   contents: read
@@ -25,6 +31,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+          ref: ${{ inputs.source_ref || github.sha }}
+      - name: Record checked-out source commit
+        run: echo "LAB_BUILD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-ci
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582
         with:
@@ -42,7 +51,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ~/codex-ci/cargo-target
-          key: image-lab-linux-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ github.sha }}
+          key: image-lab-linux-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ env.LAB_BUILD_SHA }}
           restore-keys: image-lab-linux-${{ hashFiles('codex-rs/Cargo.lock') }}-
       - name: Format using repository tooling
         run: |
@@ -61,7 +70,7 @@ jobs:
           cp "$CARGO_TARGET_DIR/debug/codex" "$CARGO_TARGET_DIR/debug/codex-code-mode-host" image-history-cli-lab/bin/
           strip image-history-cli-lab/bin/*
           cp experiments/image-history/lab.sh experiments/image-history/README.md image-history-cli-lab/
-          printf '%s\n' "$GITHUB_SHA" > image-history-cli-lab/BUILD_COMMIT
+          printf '%s\n' "$LAB_BUILD_SHA" > image-history-cli-lab/BUILD_COMMIT
           cd image-history-cli-lab
           sha256sum bin/* > SHA256SUMS
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
