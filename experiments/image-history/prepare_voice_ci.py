@@ -41,3 +41,4 @@ prefix = native / "prefix"
 with Path(os.environ["GITHUB_ENV"]).open("a") as output:
     output.write(f"PKG_CONFIG_PATH={prefix}/lib/pkgconfig\n")
     output.write(f"LD_LIBRARY_PATH={prefix}/lib\n")
+    output.write(f"CODEX_TEST_VOICE_RUNTIME={prefix}\n")
