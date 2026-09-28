@@ -95,6 +95,7 @@ pub mod guardian_review;
 mod hook_mcp_executor;
 mod hook_runtime;
 mod image_preparation;
+mod image_history_budget;
 mod installation_id;
 pub(crate) mod mcp;
 mod mcp_skill_dependencies;

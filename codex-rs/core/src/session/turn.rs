@@ -1619,6 +1619,11 @@ async fn run_sampling_request(
                 .for_prompt(&step_context.settings.model_info.input_modalities)
         };
         let mut prompt_input = prompt_input;
+        crate::image_history_budget::apply_from_env(
+            &mut prompt_input,
+            &turn_context.config.codex_home,
+        )
+        .await?;
         sess.services
             .executed_tool_calls
             .attach_to_prompt(&mut prompt_input, &mut executed_tool_calls_by_output);

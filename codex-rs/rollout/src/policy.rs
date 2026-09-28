@@ -33,11 +33,39 @@ pub fn persisted_rollout_items(
     let mut persisted = Vec::new();
     for item in items {
         if is_persisted_rollout_item(item, history_mode) {
-            persisted.push(item.clone());
+            let mut item = item.clone();
+            if std::env::var_os("CODEX_LAB_IMAGE_BUDGET_BYTES").is_some() {
+                strip_saved_image_event_payload(&mut item);
+            }
+            persisted.push(item);
         }
     }
     persisted
 }
+
+// The live event and model-facing response remain untouched. Only the redundant durable
+// event copy is removed, and only when an independently saved artifact is available.
+fn strip_saved_image_event_payload(item: &mut RolloutItem) {
+    let (result, saved_path) = match item {
+        RolloutItem::EventMsg(EventMsg::ImageGenerationEnd(event)) => {
+            (&mut event.result, &event.saved_path)
+        }
+        RolloutItem::EventMsg(EventMsg::ItemCompleted(event)) => {
+            let TurnItem::Extension(ExtensionItem::ImageGeneration(image)) = &mut event.item else {
+                return;
+            };
+            (&mut image.result, &image.saved_path)
+        }
+        _ => return,
+    };
+    if saved_path.as_ref().is_some_and(|path| path.as_path().is_file()) {
+        result.clear();
+    }
+}
+
+#[cfg(test)]
+#[path = "image_payload_tests.rs"]
+mod image_payload_tests;
 
 /// Whether a `ResponseItem` should be persisted in rollout files.
 #[inline]
