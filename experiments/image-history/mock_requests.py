@@ -16,7 +16,7 @@ import threading
 import zlib
 
 
-def png(seed):
+def png(seed, side):
     def chunk(kind, content):
         return (
             struct.pack(">I", len(content))
@@ -26,10 +26,10 @@ def png(seed):
         )
 
     rng = random.Random(seed)
-    pixels = b"".join(b"\0" + rng.randbytes(256 * 3) for _ in range(256))
+    pixels = b"".join(b"\0" + rng.randbytes(side * 3) for _ in range(side))
     return (
         b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", 256, 256, 8, 2, 0, 0, 0))
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", side, side, 8, 2, 0, 0, 0))
         + chunk(b"IDAT", zlib.compress(pixels))
         + chunk(b"IEND", b"")
     )
@@ -46,15 +46,17 @@ def image_urls(value):
         yield value
 
 
-def run(binary, directory, patched):
+def run(binary, directory, patched, *, image_count=2, side=256, budget=300000):
     home = directory / "home"
     home.mkdir()
     workspace = directory / "workspace"
     workspace.mkdir()
-    images = [workspace / "first.png", workspace / "second.png"]
+    images = [workspace / f"image-{index}.png" for index in range(image_count)]
     for seed, path in enumerate(images):
-        path.write_bytes(png(seed))
+        path.write_bytes(png(seed, side))
     requests = []
+    request_json_bytes = []
+    transferred_body_bytes = []
     errors = []
     reread_bytes = []
 
@@ -65,6 +67,7 @@ def run(binary, directory, patched):
         def do_POST(self):
             try:
                 raw = self.rfile.read(int(self.headers["Content-Length"]))
+                transferred_body_bytes.append(len(raw))
                 if self.headers.get("Content-Encoding") == "zstd":
                     import zstandard
 
@@ -73,6 +76,7 @@ def run(binary, directory, patched):
                     )
                 body = json.loads(raw)
                 requests.append(body)
+                request_json_bytes.append(len(raw))
                 # On the first request, make the CLI reread an older image using its real tool.
                 if len(requests) == 1:
                     archived = list((home / "image-history-cache").glob("*.png"))
@@ -147,19 +151,13 @@ stream_max_retries = 0
     env.pop("OPENAI_BASE_URL", None)
     env["CODEX_HOME"] = str(home)
     if patched:
-        env["CODEX_LAB_IMAGE_BUDGET_BYTES"] = "300000"
+        env["CODEX_LAB_IMAGE_BUDGET_BYTES"] = str(budget)
     command = [binary, "exec", "--json", "--skip-git-repo-check"]
     try:
         first = subprocess.run(
             command
-            + [
-                "-i",
-                str(images[0]),
-                "-i",
-                str(images[1]),
-                "--",
-                "Inspect these test images.",
-            ],
+            + [argument for image in images for argument in ("-i", str(image))]
+            + ["--", "Inspect these test images."],
             cwd=workspace,
             env=env,
             text=True,
@@ -194,9 +192,9 @@ stream_max_retries = 0
         )
         payloads = [list(image_urls(request["input"])) for request in requests]
         sizes = [sum(map(len, urls)) for urls in payloads]
-        assert len(payloads[0]) == (1 if patched else 2), sizes
+        assert len(payloads[0]) == (1 if patched else image_count), sizes
         if patched:
-            assert all(size <= 300000 for size in sizes), sizes
+            assert all(size <= budget for size in sizes), sizes
             assert any(
                 hashlib.sha1(base64.b64decode(url.split(",", 1)[1])).digest()
                 == hashlib.sha1(reread_bytes[0]).digest()
@@ -208,9 +206,8 @@ stream_max_retries = 0
         return {
             "image_bytes_per_request": sizes,
             "image_count_per_request": list(map(len, payloads)),
-            "request_json_bytes": [
-                len(json.dumps(request).encode()) for request in requests
-            ],
+            "request_json_bytes": request_json_bytes,
+            "transferred_body_bytes": transferred_body_bytes,
         }
     finally:
         server.shutdown()
@@ -225,10 +222,15 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="run-", dir=test_parent) as name:
         root = Path(name)
         result = {}
-        for mode in ("baseline", "patched"):
-            directory = root / mode
-            directory.mkdir()
-            result[mode] = run(binary, directory, mode == "patched")
+        for size, settings in (
+            ("small", {}),
+            ("large", {"image_count": 8, "side": 1024, "budget": 8388608}),
+        ):
+            for mode in ("baseline", "patched"):
+                name = f"{size}_{mode}"
+                directory = root / name
+                directory.mkdir()
+                result[name] = run(binary, directory, mode == "patched", **settings)
         Path("/tmp/image-history-lab-results.json").write_text(
             json.dumps(result, indent=2)
         )

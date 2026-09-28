@@ -3,6 +3,9 @@
 Base: `rust-v0.158.0-alpha.2.1` (`0d9c7cbfa6cf1489f55a8a9542b75ddd2c061807`).
 
 This is an experimental Linux x64 CLI for WSL. It does not replace or launch Codex Desktop.
+`BUILD_COMMIT` plus `SOURCE_PATCH` identifies the actual build sources, including the release
+tag's workspace-version lockfile normalization. `BUILD_RUN` links to full validation status;
+the experimental artifact is uploaded after focused tests, before the full suite finishes.
 Download the successful GitHub Actions artifact, extract it, and run from WSL:
 
 ```sh
@@ -19,6 +22,7 @@ To compare the unmodified behavior of the same source revision, use `bash lab.sh
 ## Behavior
 
 - The patched launcher enables an 8 MiB aggregate inline-image budget for ordinary sampling requests.
+  Override it for one run with `CODEX_LAB_IMAGE_BUDGET_BYTES=16777216 bash lab.sh patched`.
 - Most recent images are retained in order. Older images are replaced in the outgoing request
   by notices with local paths. Original bytes are atomically cached under the experimental home.
 - The model is explicitly told that omitted pixels are unavailable and to use `view_image`
@@ -46,3 +50,4 @@ This tests CLI behavior only. It does not establish desktop UI compatibility. Do
 GitHub Actions runs focused Rust tests and a real CLI against a localhost mock Responses server.
 The mock uses generated test PNGs, exercises request limits and resume, and needs no OpenAI
 credentials. No real screenshots or account files are included in the public build artifacts.
+It includes both a small fixture and eight 1024-pixel noise images producing requests over 30 MB.
