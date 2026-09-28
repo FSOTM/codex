@@ -21,7 +21,7 @@ jobs:
   linux-cli:
     if: github.repository == 'FSOTM/codex'
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       CARGO_BUILD_JOBS: "2"
       CARGO_INCREMENTAL: "0"
@@ -41,18 +41,24 @@ jobs:
       - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532
         with:
           tool: nextest@0.9.103,uv
+      - uses: ./.github/actions/setup-rusty-v8
+        with:
+          target: x86_64-unknown-linux-gnu
       - name: Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config libcap-dev libasound2-dev bubblewrap
-      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7
+      - uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        id: cargo-cache
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/codex-ci/cargo-target
+            ~/.cache/codex-ci/cargo-target
           key: image-lab-linux-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ env.LAB_BUILD_SHA }}
           restore-keys: image-lab-linux-${{ hashFiles('codex-rs/Cargo.lock') }}-
+      - name: Scoped Clippy fixes before validation
+        run: just fix -p codex-core -p codex-rollout --lib
       - name: Format using repository tooling
         run: |
           just fmt
@@ -64,6 +70,11 @@ jobs:
         run: cargo build --locked --bin codex --bin codex-code-mode-host
       - name: Exercise real CLI requests against local mock server
         run: uv run --with zstandard python experiments/image-history/mock_requests.py "$CARGO_TARGET_DIR/debug/codex"
+      - name: Full workspace regression suite
+        run: just test
+      - name: Record final formatting and lint edits
+        if: always()
+        run: git diff --binary > /tmp/image-lab-format.patch
       - name: Package experimental binaries
         run: |
           mkdir -p image-history-cli-lab/bin
@@ -87,3 +98,12 @@ jobs:
             /tmp/image-lab-format.patch
             /tmp/image-history-lab-results.json
           if-no-files-found: warn
+      - name: Save build cache, including after failed validation
+        if: always()
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/codex-ci/cargo-target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
