@@ -3,6 +3,8 @@
 use std::io::Write;
 use std::path::Path;
 
+use crate::context::ContextualUserFragment;
+use crate::context::image_history_omission::ImageHistoryOmission;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use codex_protocol::error::CodexErr;
@@ -12,8 +14,6 @@ use codex_protocol::models::ImageReference;
 use codex_protocol::models::ResponseItem;
 use sha1::Digest;
 use sha1::Sha1;
-use crate::context::ContextualUserFragment;
-use crate::context::image_history_omission::ImageHistoryOmission;
 
 const ENV: &str = "CODEX_LAB_IMAGE_BUDGET_BYTES";
 
@@ -48,10 +48,9 @@ pub(crate) async fn apply(
                         image: ImageReference::Inline { image_url },
                         ..
                     } = part
-                        && let Some(text) = replacement(
-                            image_url, cache_dir, limit, &mut remaining, &mut evict,
-                        )
-                        .await?
+                        && let Some(text) =
+                            replacement(image_url, cache_dir, limit, &mut remaining, &mut evict)
+                                .await?
                     {
                         *part = ContentItem::InputText { text };
                     }
@@ -65,10 +64,9 @@ pub(crate) async fn apply(
                             image: ImageReference::Inline { image_url },
                             ..
                         } = part
-                            && let Some(text) = replacement(
-                                image_url, cache_dir, limit, &mut remaining, &mut evict,
-                            )
-                            .await?
+                            && let Some(text) =
+                                replacement(image_url, cache_dir, limit, &mut remaining, &mut evict)
+                                    .await?
                         {
                             *part = FunctionCallOutputContentItem::InputText { text };
                         }
@@ -126,7 +124,11 @@ async fn replacement(
         "data:image/jpeg;base64" => "jpg",
         "data:image/webp;base64" => "webp",
         "data:image/gif;base64" => "gif",
-        _ => return Err(CodexErr::InvalidRequest(format!("Unsupported image encoding: {prefix}"))),
+        _ => {
+            return Err(CodexErr::InvalidRequest(format!(
+                "Unsupported image encoding: {prefix}"
+            )));
+        }
     };
     let bytes = STANDARD.decode(encoded).map_err(|error| {
         CodexErr::InvalidRequest(format!("Cannot archive invalid image Base64: {error}"))
@@ -136,11 +138,15 @@ async fn replacement(
     let saved_path = path.clone();
     // Atomic, no-clobber writes: a crash must not leave a partial 'original'.
     tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        let directory = path.parent().ok_or_else(|| std::io::Error::other("Missing cache directory"))?;
+        let directory = path
+            .parent()
+            .ok_or_else(|| std::io::Error::other("Missing cache directory"))?;
         std::fs::create_dir_all(directory)?;
         if path.exists() {
             if std::fs::read(&path)? != bytes {
-                return Err(std::io::Error::other("Image cache content mismatch; refusing to overwrite"));
+                return Err(std::io::Error::other(
+                    "Image cache content mismatch; refusing to overwrite",
+                ));
             }
             return Ok(());
         }
@@ -157,7 +163,13 @@ async fn replacement(
     })
     .await
     .map_err(|error| CodexErr::InvalidRequest(format!("Image archival task failed: {error}")))??;
-    Ok(Some(ImageHistoryOmission { digest, path: saved_path }.body()))
+    Ok(Some(
+        ImageHistoryOmission {
+            digest,
+            path: saved_path,
+        }
+        .body(),
+    ))
 }
 
 #[cfg(test)]

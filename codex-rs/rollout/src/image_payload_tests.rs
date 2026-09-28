@@ -11,10 +11,14 @@ fn image_event_copy_is_removed_only_after_artifact_is_saved() {
             "type":"image_generation_end", "call_id":"test", "status":"completed",
             "revised_prompt":null, "result":"original-base64", "saved_path":path
         }
-    })).unwrap();
+    }))
+    .unwrap();
     let mut missing = original.clone();
     strip_saved_image_event_payload(&mut missing);
-    assert_eq!(serde_json::to_value(&missing).unwrap(), serde_json::to_value(&original).unwrap());
+    assert_eq!(
+        serde_json::to_value(&missing).unwrap(),
+        serde_json::to_value(&original).unwrap()
+    );
     std::fs::write(&path, b"saved-artifact").unwrap();
     let mut persisted = original.clone();
     strip_saved_image_event_payload(&mut persisted);
@@ -37,11 +41,15 @@ fn image_event_copy_is_removed_from_paginated_history_without_changing_live_even
                 "status":"completed", "revisedPrompt":null, "result":"original-base64",
                 "savedPath":file.path()}
         }
-    })).unwrap();
+    }))
+    .unwrap();
     let mut persisted = original.clone();
     strip_saved_image_event_payload(&mut persisted);
     let mut expected = serde_json::to_value(&original).unwrap();
     expected["payload"]["item"]["result"] = json!("");
     assert_eq!(serde_json::to_value(&persisted).unwrap(), expected);
-    assert_eq!(serde_json::to_value(&original).unwrap()["payload"]["item"]["result"], json!("original-base64"));
+    assert_eq!(
+        serde_json::to_value(&original).unwrap()["payload"]["item"]["result"],
+        json!("original-base64")
+    );
 }

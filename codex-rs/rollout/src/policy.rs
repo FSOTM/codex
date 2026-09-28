@@ -58,7 +58,10 @@ fn strip_saved_image_event_payload(item: &mut RolloutItem) {
         }
         _ => return,
     };
-    if saved_path.as_ref().is_some_and(|path| path.as_path().is_file()) {
+    if saved_path
+        .as_ref()
+        .is_some_and(|path| path.as_path().is_file())
+    {
         result.clear();
     }
 }
