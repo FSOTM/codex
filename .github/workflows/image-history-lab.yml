@@ -1,0 +1,89 @@
+name: Image history CLI lab
+on:
+  push:
+    branches: [image-history-lab]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Experiment source commit or branch
+        required: true
+        default: image-history-lab
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-history-cli-lab-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-cli:
+    if: github.repository == 'FSOTM/codex'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.source_ref || github.sha }}
+      - name: Record checked-out source commit
+        run: echo "LAB_BUILD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-ci
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582
+        with:
+          components: rustfmt, clippy
+      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532
+        with:
+          tool: nextest@0.9.103,uv
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libcap-dev libasound2-dev bubblewrap
+      - uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/codex-ci/cargo-target
+          key: image-lab-linux-${{ hashFiles('codex-rs/Cargo.lock') }}-${{ env.LAB_BUILD_SHA }}
+          restore-keys: image-lab-linux-${{ hashFiles('codex-rs/Cargo.lock') }}-
+      - name: Format using repository tooling
+        run: |
+          just fmt
+          git diff --binary > /tmp/image-lab-format.patch
+      - name: Targeted regression tests
+        run: just test -p codex-core -p codex-rollout --lib -E 'test(image_history_budget) | test(image_event_copy)'
+      - name: Build isolated CLI and Code Mode host
+        working-directory: codex-rs
+        run: cargo build --locked --bin codex --bin codex-code-mode-host
+      - name: Exercise real CLI requests against local mock server
+        run: uv run --with zstandard python experiments/image-history/mock_requests.py "$CARGO_TARGET_DIR/debug/codex"
+      - name: Package experimental binaries
+        run: |
+          mkdir -p image-history-cli-lab/bin
+          cp "$CARGO_TARGET_DIR/debug/codex" "$CARGO_TARGET_DIR/debug/codex-code-mode-host" image-history-cli-lab/bin/
+          strip image-history-cli-lab/bin/*
+          cp experiments/image-history/lab.sh experiments/image-history/README.md image-history-cli-lab/
+          printf '%s\n' "$LAB_BUILD_SHA" > image-history-cli-lab/BUILD_COMMIT
+          cd image-history-cli-lab
+          sha256sum bin/* > SHA256SUMS
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: image-history-cli-lab-linux-x64
+          path: image-history-cli-lab/
+          retention-days: 14
+      - name: Upload diagnostics and formatting patch
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: image-history-lab-diagnostics
+          path: |
+            /tmp/image-lab-format.patch
+            /tmp/image-history-lab-results.json
+          if-no-files-found: warn
